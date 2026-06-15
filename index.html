@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>The Engine Room · Football Blast</title>
+
+<!--
+==================================================================================
+  FOOTBALL BLAST - THE ENGINE ROOM (Block 2, Weeks 5-8)
+  Self-contained single-page app. No build step. Deploy to GitHub Pages as-is.
+
+  STRUCTURE
+  - <style> .......... design tokens + all CSS (mobile-first, readability minimums)
+  - <script>
+      DATA ........... CONCEPTS, MISSIONS, BRAIN_TESTER pool, BADGES, RANKS, XP
+      STATE .......... localStorage helpers + updateState() + badge checks
+      FEEDBACK ....... toasts, confetti, Web Audio sound cues
+      ANIMATIONS ..... 4 inline-SVG top-down pitch animations (SMIL)
+      RENDER ......... one render function per route
+      ROUTER ......... hash routing + boot
+
+  ROUTES
+      #/                     Landing
+      #/concepts             Concepts overview (2x2 grid + Brain-Tester card)
+      #/concept/scanning     Scanning & Turning   (Week 5)
+      #/concept/switch       The Switch           (Week 6)
+      #/concept/pcb          Pressure·Cover·Balance (Week 7)
+      #/concept/interception Interception         (Week 8)
+      #/brain-tester         Brain-Tester (gated: all 4 concepts opened)
+      #/settings             Settings
+
+  STATE KEY: localStorage "football-blast-engine-room"
+==================================================================================
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+/* ---------- DESIGN TOKENS ---------- */
+:root{
+  --bg:#0b1220;
+  --panel:#101c31;
+  --panel-2:#16243d;
+  --accent:#1a4ed8;        /* Champions League blue */
+  --accent-bright:#5b86f0; /* brighter tint for blue TEXT on dark (contrast) */
+  --gold:#ffc857;
+  --text:#eaf1f7;
+  --dim:#8fa3bd;
+  --success:#43f08f;
+  --enemy:#e0566c;
+  --line:#223251;
+
+  /* type scale - mobile minimums (NON-NEGOTIABLE) */
+  --fs-body:17px;
+  --fs-lead:18px;     /* BIG IDEA / WHAT THIS TEACHES paragraphs */
+  --fs-quote:24px;    /* coach voice quotes */
+  --fs-h1:48px;       /* landing block title (also see .hero-title clamp) */
+  --fs-h1c:40px;      /* concept name */
+  --fs-h2:22px;       /* section headers */
+  --fs-h3:20px;       /* card titles */
+  --fs-small:14px;    /* hard floor - never smaller */
+  --space:24px;
+
+  --maxw:600px;
+  --radius:16px;
+}
+@media (min-width:769px){
+  :root{
+    --fs-body:18px;
+    --fs-lead:20px;
+    --fs-quote:28px;
+    --fs-h1:64px;
+    --fs-h1c:52px;
+    --fs-h2:28px;
+    --fs-h3:24px;
+    --space:32px;
+  }
+}
+
+/* ---------- RESET / BASE ---------- */
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Inter',system-ui,-apple-system,sans-serif;
+  font-size:var(--fs-body);
+  line-height:1.6;
+  letter-spacing:.005em;
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+  overflow-x:hidden;
+}
+.tnum{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:none}
+:focus-visible{outline:3px solid var(--gold);outline-offset:3px;border-radius:6px}
+
+/* ---------- LAYOUT ---------- */
+#app{max-width:var(--maxw);margin:0 auto;padding:0 18px 64px;min-height:100vh}
+.screen{animation:fade .35s ease}
+@keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+.wordmark{
+  font-family:'Anton',sans-serif;
+  font-size:14px;letter-spacing:.18em;
+  color:var(--dim);text-transform:uppercase;
+  padding-top:20px;
+}
+.wordmark b{color:var(--accent-bright);font-weight:400}
+
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding-top:18px;gap:12px;
+}
+.topbar .crumb{font-family:'Anton',sans-serif;letter-spacing:.05em;font-size:18px;color:var(--text);text-transform:uppercase}
+.back{
+  display:inline-flex;align-items:center;gap:8px;
+  min-height:48px;padding:8px 14px 8px 6px;margin-left:-6px;
+  font-size:var(--fs-small);font-weight:600;letter-spacing:.04em;
+  color:var(--dim);text-transform:uppercase;border-radius:10px;
+}
+.back:hover{color:var(--text)}
+.back svg{width:18px;height:18px}
+
+h1,h2,h3{line-height:1.15;text-transform:uppercase}
+.display{font-family:'Anton',sans-serif;font-weight:400;letter-spacing:.01em}
+
+/* ---------- LANDING ---------- */
+.hero{padding-top:8px}
+.hero-title{
+  font-family:'Anton',sans-serif;font-weight:400;
+  font-size:clamp(52px,15vw,96px);line-height:.95;letter-spacing:.01em;
+  text-transform:uppercase;margin:6px 0 4px;
+}
+.hero-title .blue{color:var(--accent-bright)}
+.tagline{
+  font-size:var(--fs-h3);color:var(--gold);font-weight:700;
+  letter-spacing:.04em;text-transform:uppercase;margin-bottom:var(--space);
+}
+.pitch-wrap{
+  background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--radius);padding:14px;margin-bottom:var(--space);
+}
+.pitch-wrap svg{display:block;width:100%;height:auto}
+.lede{
+  font-size:var(--fs-lead);line-height:1.7;max-width:60ch;
+  color:var(--text);margin-bottom:var(--space);
+}
+.cta{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  width:100%;min-height:60px;padding:18px 22px;
+  background:var(--accent);color:#fff;
+  font-family:'Anton',sans-serif;font-size:22px;letter-spacing:.06em;
+  text-transform:uppercase;border-radius:14px;
+  box-shadow:0 10px 30px -10px rgba(26,78,216,.7);
+  transition:transform .15s ease,box-shadow .15s ease,background .15s ease;
+}
+.cta:hover{background:#2459e8;transform:translateY(-2px);box-shadow:0 16px 36px -10px rgba(26,78,216,.85)}
+.cta:active{transform:translateY(0)}
+.cta svg{width:22px;height:22px}
+
+.hero-panel{
+  position:relative;overflow:hidden;border-radius:var(--radius);
+  background:linear-gradient(135deg,#101c31,#0d1830);
+  border:1px solid var(--line);padding:22px 20px 24px;margin-bottom:var(--space);
+}
+.hero-panel::before{
+  content:"";position:absolute;inset:-40%;
+  background:radial-gradient(closest-side,rgba(26,78,216,.35),transparent 70%);
+  animation:drift 9s ease-in-out infinite;pointer-events:none;
+}
+@keyframes drift{0%,100%{transform:translate(-12%,-6%)}50%{transform:translate(14%,8%)}}
+.hero-panel>*{position:relative}
+
+/* ---------- CONCEPTS OVERVIEW ---------- */
+.subhead{
+  font-size:var(--fs-h3);color:var(--dim);font-weight:600;
+  letter-spacing:.04em;text-transform:uppercase;margin:var(--space) 0 14px;
+}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{
+  position:relative;display:flex;flex-direction:column;gap:8px;
+  text-align:left;min-height:150px;padding:16px 14px 14px;
+  background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease;
+}
+.card:hover{transform:translateY(-3px);border-color:var(--accent);box-shadow:0 14px 30px -16px rgba(26,78,216,.8)}
+.card .ico{width:30px;height:30px;color:var(--accent-bright)}
+.card .ico svg{width:100%;height:100%}
+.card .cname{font-family:'Anton',sans-serif;font-size:var(--fs-h3);line-height:1.05;letter-spacing:.01em;text-transform:uppercase}
+.card .ctag{font-size:var(--fs-small);color:var(--dim);font-weight:500;margin-top:auto}
+.card .status{
+  position:absolute;top:12px;right:12px;width:26px;height:26px;
+  display:flex;align-items:center;justify-content:center;
+  border-radius:50%;font-size:15px;font-weight:800;
+  border:2px solid var(--line);color:var(--dim);background:#0c1729;
+}
+.card .status.opened{border-color:var(--accent);color:var(--accent-bright)}
+.card .status.starred{border-color:var(--gold);color:var(--gold)}
+
+/* Brain-Tester card */
+.bt-card{
+  display:flex;align-items:center;gap:14px;width:100%;
+  margin-top:14px;padding:18px 16px;min-height:84px;text-align:left;
+  border-radius:14px;border:1px solid var(--line);
+  background:var(--panel);transition:all .35s ease;
+}
+.bt-card .bt-ico{flex:0 0 auto;width:34px;height:34px;color:var(--dim)}
+.bt-card .bt-ico svg{width:100%;height:100%}
+.bt-card .bt-txt{display:flex;flex-direction:column;gap:3px}
+.bt-card .bt-title{font-family:'Anton',sans-serif;font-size:var(--fs-h3);letter-spacing:.03em;text-transform:uppercase}
+.bt-card .bt-sub{font-size:var(--fs-small);color:var(--dim);font-weight:500}
+.bt-card.locked{filter:grayscale(.7);opacity:.78;cursor:default}
+.bt-card.unlocked{
+  background:linear-gradient(135deg,var(--accent),#1138a8);
+  border-color:var(--accent-bright);color:#fff;cursor:pointer;
+  box-shadow:0 14px 34px -14px rgba(26,78,216,.9);
+}
+.bt-card.unlocked .bt-ico,.bt-card.unlocked .bt-sub{color:#dbe6ff}
+.bt-card.just-unlocked{animation:unlockPulse 1s ease}
+@keyframes unlockPulse{0%{transform:scale(.96)}40%{transform:scale(1.03)}100%{transform:scale(1)}}
+
+.foot-row{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-top:22px;padding-top:16px;border-top:1px solid var(--line);
+}
+.rank-chip{display:flex;flex-direction:column;gap:2px}
+.rank-chip .rk{font-family:'Anton',sans-serif;font-size:var(--fs-h3);letter-spacing:.03em;color:var(--gold)}
+.rank-chip .xp{font-size:var(--fs-small);color:var(--dim)}
+.link-btn{
+  min-height:48px;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;
+  font-size:var(--fs-small);font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--dim);border-radius:10px;
+}
+.link-btn:hover{color:var(--text)}
+.link-btn svg{width:18px;height:18px}
+
+/* ---------- CONCEPT PAGE ---------- */
+.cp-title{font-family:'Anton',sans-serif;font-size:var(--fs-h1c);line-height:1;letter-spacing:.01em;margin:8px 0 6px}
+.cp-line{font-size:var(--fs-lead);color:var(--accent-bright);font-weight:700;margin-bottom:var(--space)}
+
+.anim-stage{
+  position:relative;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--radius);padding:12px;margin-bottom:14px;cursor:pointer;
+}
+.anim-stage svg{display:block;width:100%;height:auto;max-height:60vh;margin:0 auto;border-radius:10px}
+.anim-holder{display:flex;justify-content:center}
+.anim-cap{font-size:var(--fs-small);color:var(--dim);text-align:center;margin:10px 6px 2px;line-height:1.4}
+/* moving tokens animate via transform transitions (correct, on-axis movement) */
+.apiece{transition:transform .8s cubic-bezier(.3,.9,.3,1)}
+.aball{transition:transform .6s cubic-bezier(.3,.9,.3,1)}
+.alane{fill:none;stroke:var(--gold);stroke-width:2.5;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset .7s ease}
+.alane.fwd{stroke:var(--accent-bright)}
+.afade{opacity:0;transition:opacity .45s ease}
+.afade.on{opacity:1}
+.glance{opacity:0}
+.glance.gL{animation:glL 1.5s ease forwards}
+.glance.gR{animation:glR 1.5s ease forwards}
+@keyframes glL{0%{opacity:0}14%{opacity:.34}34%{opacity:0}100%{opacity:0}}
+@keyframes glR{0%{opacity:0}46%{opacity:0}58%{opacity:.34}78%{opacity:0}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.apiece,.aball,.alane,.afade{transition:none}.glance{animation:none}}
+
+/* ported interactive Pressure-Cover-Balance diagram (from reference) */
+.pcbwrap{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:14px}
+.pcbwrap svg{display:block;width:100%;height:auto;max-height:58vh;margin:0 auto}
+.pcb-piece{transition:transform .9s cubic-bezier(.3,.9,.3,1)}
+.pcb-ball{transition:transform .6s cubic-bezier(.3,.9,.3,1)}
+.pcb-dbtns{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+.pcb-dbtn{min-height:48px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:8px 4px;cursor:pointer;color:var(--dim);font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;text-align:center;line-height:1.2;transition:border-color .2s ease,color .2s ease,background .2s ease}
+.pcb-dbtn:hover{border-color:var(--accent)}
+.pcb-dbtn.sel{border-color:var(--success);color:var(--success);background:rgba(67,240,143,.12)}
+.pcb-dbtn.amb.sel{border-color:var(--gold);color:var(--gold);background:rgba(255,200,87,.12)}
+.pcb-reveal{margin-top:10px;background:var(--panel-2);border:1px dashed var(--line);border-radius:10px;padding:12px 14px;font-size:var(--fs-body);line-height:1.5;min-height:78px}
+.pcb-reveal .rt{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:var(--fs-h3);letter-spacing:.03em;margin-bottom:5px;color:var(--success)}
+.pcb-callout{margin-top:12px;border-left:3px solid var(--accent);padding:11px 14px;font-size:var(--fs-small);line-height:1.6;background:rgba(26,78,216,.10);border-radius:0 8px 8px 0}
+.pcb-callout b{color:var(--accent-bright);letter-spacing:.06em}
+.replay-hint{
+  position:absolute;right:14px;top:14px;
+  display:inline-flex;align-items:center;gap:6px;
+  background:rgba(11,18,32,.82);border:1px solid var(--line);
+  padding:6px 10px;border-radius:999px;font-size:var(--fs-small);
+  color:var(--dim);font-weight:600;letter-spacing:.03em;pointer-events:none;
+}
+.replay-hint svg{width:14px;height:14px}
+
+.quote{
+  position:relative;margin:var(--space) 0;padding:14px 16px 14px 20px;
+  border-left:4px solid var(--accent);
+  background:linear-gradient(90deg,rgba(26,78,216,.14),transparent);
+  border-radius:0 12px 12px 0;
+}
+.quote .q{
+  font-family:'Anton',sans-serif;font-size:var(--fs-quote);
+  line-height:1.18;letter-spacing:.01em;color:var(--text);text-transform:uppercase;
+}
+.quote .q .pcb{display:block;font-size:.6em;color:var(--accent-bright);letter-spacing:.06em;margin-top:4px}
+.quote .by{font-size:var(--fs-small);color:var(--dim);font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-top:8px}
+
+.sec{margin-top:var(--space)}
+.sec h2{
+  font-family:'Anton',sans-serif;font-size:var(--fs-h2);letter-spacing:.04em;
+  color:var(--gold);margin-bottom:10px;
+}
+.sec p{font-size:var(--fs-body);line-height:1.6;max-width:60ch;color:var(--text)}
+.sec.lead p{font-size:var(--fs-lead);line-height:1.7}
+.cues{list-style:none;display:flex;flex-direction:column;gap:10px;max-width:60ch}
+.cues li{
+  position:relative;padding:10px 12px 10px 38px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  font-size:var(--fs-body);line-height:1.5;
+}
+.cues li::before{
+  content:"";position:absolute;left:14px;top:50%;transform:translateY(-50%);
+  width:10px;height:10px;border-radius:50%;
+  background:var(--accent);box-shadow:0 0 0 4px rgba(26,78,216,.18);
+}
+.task-box{
+  max-width:60ch;padding:16px 18px;border-radius:12px;
+  background:var(--panel-2);border:1px dashed var(--accent);
+}
+.task-box .tlabel{font-size:var(--fs-small);color:var(--dim);font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.task-box .ttext{font-size:var(--fs-lead);line-height:1.5;color:var(--text);font-weight:600}
+
+.reveal-btn{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  width:100%;min-height:56px;margin-top:calc(var(--space) + 4px);
+  background:transparent;border:2px solid var(--accent);color:var(--accent-bright);
+  font-family:'Anton',sans-serif;font-size:20px;letter-spacing:.05em;text-transform:uppercase;
+  border-radius:14px;transition:all .15s ease;
+}
+.reveal-btn:hover{background:var(--accent);color:#fff}
+.reveal-btn svg{width:20px;height:20px}
+
+/* ---------- MISSION REVEAL PANEL (bottom sheet) ---------- */
+.sheet-scrim{
+  position:fixed;inset:0;z-index:60;background:rgba(5,9,18,.66);
+  opacity:0;pointer-events:none;transition:opacity .28s ease;
+  backdrop-filter:blur(2px);
+}
+.sheet-scrim.open{opacity:1;pointer-events:auto}
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;z-index:61;
+  max-width:var(--maxw);margin:0 auto;
+  background:var(--panel);border-top:1px solid var(--accent);
+  border-radius:22px 22px 0 0;padding:18px 18px calc(22px + env(safe-area-inset-bottom));
+  transform:translateY(110%);transition:transform .32s cubic-bezier(.22,.9,.3,1);
+  max-height:86vh;overflow-y:auto;
+  box-shadow:0 -20px 50px -20px rgba(0,0,0,.7);
+}
+.sheet.open{transform:translateY(0)}
+.sheet-grab{width:42px;height:5px;border-radius:3px;background:var(--line);margin:0 auto 14px}
+.sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.sheet-head h3{font-family:'Anton',sans-serif;font-size:var(--fs-h2);letter-spacing:.03em;color:var(--text)}
+.sheet-sub{font-size:var(--fs-small);color:var(--dim);margin:2px 0 14px}
+.sheet-close{
+  flex:0 0 auto;width:48px;height:48px;border-radius:12px;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--panel-2);border:1px solid var(--line);color:var(--dim);
+}
+.sheet-close:hover{color:var(--text);border-color:var(--accent)}
+.sheet-close svg{width:20px;height:20px}
+.mlist{display:flex;flex-direction:column;gap:10px}
+.mrow{
+  display:flex;gap:12px;padding:13px 14px;border-radius:12px;
+  background:var(--panel-2);border:1px solid var(--line);
+}
+.mrow.bonus{border-color:var(--gold);background:linear-gradient(90deg,rgba(255,200,87,.10),var(--panel-2))}
+.mrow .mtag{
+  flex:0 0 auto;align-self:flex-start;margin-top:2px;
+  font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+  padding:3px 7px;border-radius:6px;color:#0b1220;background:var(--accent-bright);
+}
+.mrow.bonus .mtag{background:var(--gold)}
+.mrow .mbody .mname{font-family:'Anton',sans-serif;font-size:var(--fs-h3);letter-spacing:.02em;color:var(--text)}
+.mrow .mbody .mdesc{font-size:var(--fs-small);line-height:1.5;color:var(--dim);margin-top:3px}
+.sheet-foot{font-size:var(--fs-small);color:var(--dim);text-align:center;margin-top:16px;line-height:1.5}
+
+/* ---------- BRAIN-TESTER ---------- */
+.bt-lock-msg{
+  margin-top:40px;text-align:center;padding:30px 20px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+}
+.bt-lock-msg .lk{width:46px;height:46px;color:var(--dim);margin:0 auto 14px}
+.bt-lock-msg p{font-size:var(--fs-lead);color:var(--text);max-width:36ch;margin:0 auto}
+.bt-progress{font-size:var(--fs-small);color:var(--dim);margin-top:14px}
+
+.bt-meta{display:flex;align-items:center;justify-content:space-between;margin:8px 0 16px}
+.bt-meta .qcount{font-family:'Anton',sans-serif;font-size:var(--fs-h3);letter-spacing:.04em;color:var(--dim)}
+.bt-meta .qcount b{color:var(--accent-bright)}
+.bt-bar{height:8px;border-radius:5px;background:var(--panel-2);overflow:hidden;margin-bottom:22px}
+.bt-bar i{display:block;height:100%;background:var(--accent);transition:width .4s ease}
+.qtext{font-family:'Anton',sans-serif;font-size:clamp(24px,6.5vw,32px);line-height:1.12;letter-spacing:.01em;margin-bottom:20px;text-transform:none}
+.opts{display:flex;flex-direction:column;gap:12px}
+.opt{
+  width:100%;text-align:left;min-height:56px;padding:14px 16px;
+  font-size:var(--fs-body);line-height:1.4;
+  background:var(--panel);border:2px solid var(--line);border-radius:12px;
+  transition:border-color .15s ease,background .15s ease;
+}
+.opt:hover:not(:disabled){border-color:var(--accent)}
+.opt:disabled{cursor:default}
+.opt.right{border-color:var(--success);background:rgba(67,240,143,.12)}
+.opt.wrong{border-color:var(--enemy);background:rgba(224,86,108,.12)}
+.opt .mk{font-weight:800;margin-right:6px}
+.fb{margin-top:18px;padding:14px 16px;border-radius:12px;font-size:var(--fs-body);line-height:1.5}
+.fb.ok{background:rgba(67,240,143,.12);border:1px solid var(--success);color:var(--text)}
+.fb.no{background:rgba(224,86,108,.10);border:1px solid var(--enemy);color:var(--text)}
+.fb b{color:var(--text)}
+#fbSlot{display:flex;flex-direction:column}
+#fbSlot .fb{width:100%}
+.nextbtn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  align-self:flex-end;width:auto;min-height:48px;padding:0 22px;margin-top:18px;
+  background:var(--accent);color:#fff;font-family:'Anton',sans-serif;
+  font-size:16px;letter-spacing:.05em;text-transform:uppercase;border-radius:12px;
+}
+.nextbtn svg{width:18px;height:18px}
+.nextbtn:hover{background:#2459e8}
+
+/* results */
+.result{text-align:center;padding-top:10px}
+.result .score{font-family:'Anton',sans-serif;font-size:clamp(64px,22vw,120px);line-height:1;color:var(--text)}
+.result .score small{font-size:.32em;color:var(--dim)}
+.result .iq{
+  display:inline-block;margin-top:6px;padding:8px 18px;border-radius:999px;
+  font-family:'Anton',sans-serif;font-size:var(--fs-h2);letter-spacing:.05em;
+  background:var(--gold);color:#0b1220;
+}
+.result .iq.razor,.result .iq.genius{background:var(--gold)}
+.result .xp-earn{font-size:var(--fs-lead);color:var(--success);font-weight:700;margin-top:18px}
+.result .again{margin-top:24px}
+
+/* ---------- SETTINGS ---------- */
+.set-sec{margin-top:var(--space);padding:18px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius)}
+.set-sec h2{font-family:'Anton',sans-serif;font-size:var(--fs-h2);letter-spacing:.03em;color:var(--text);margin-bottom:14px}
+.prog-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;font-size:var(--fs-body)}
+.prog-row .v{font-family:'Anton',sans-serif;font-size:var(--fs-h3);color:var(--gold)}
+.badge-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:14px}
+.badge{
+  display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;
+  padding:10px 4px;border-radius:12px;background:var(--panel-2);border:1px solid var(--line);
+}
+.badge.locked{filter:grayscale(1);opacity:.5}
+.badge .bdisc{
+  width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 30% 30%,var(--gold),#c98f1d);color:#0b1220;
+}
+.badge.locked .bdisc{background:#2a3a55;color:var(--dim)}
+.badge .bdisc svg{width:20px;height:20px}
+.badge .bname{font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;line-height:1.1}
+.badge .bdesc-tip{font-size:10px;color:var(--dim);line-height:1.2}
+
+.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:48px}
+.toggle-row .lbl{font-size:var(--fs-body);font-weight:600}
+.switch{position:relative;flex:0 0 auto;width:64px;height:48px;display:flex;align-items:center;justify-content:flex-end;background:transparent;border:none}
+.switch .track{position:relative;width:58px;height:32px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line);transition:background .2s ease,border-color .2s ease}
+.switch[aria-checked="true"] .track{background:var(--accent);border-color:var(--accent-bright)}
+.switch .knob{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:transform .2s ease}
+.switch[aria-checked="true"] .knob{transform:translateX(26px)}
+.danger{
+  width:100%;min-height:52px;margin-top:4px;
+  background:transparent;border:2px solid var(--enemy);color:var(--enemy);
+  font-family:'Anton',sans-serif;font-size:18px;letter-spacing:.04em;text-transform:uppercase;border-radius:12px;
+}
+.danger:hover{background:var(--enemy);color:#fff}
+.set-foot{font-size:var(--fs-small);color:var(--dim);text-align:center;margin-top:22px;line-height:1.5}
+
+/* confirm modal */
+.modal-scrim{position:fixed;inset:0;z-index:70;background:rgba(5,9,18,.7);display:none;align-items:center;justify-content:center;padding:24px}
+.modal-scrim.open{display:flex}
+.modal{max-width:380px;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;text-align:center}
+.modal h3{font-family:'Anton',sans-serif;font-size:var(--fs-h2);margin-bottom:8px;text-transform:uppercase}
+.modal p{font-size:var(--fs-body);color:var(--dim);margin-bottom:20px;line-height:1.5}
+.modal-actions{display:flex;gap:12px}
+.modal-actions button{flex:1;min-height:50px;border-radius:12px;font-weight:700;font-size:var(--fs-body)}
+.btn-ghost{background:var(--panel-2);border:1px solid var(--line);color:var(--text)}
+.btn-ghost:hover{border-color:var(--accent)}
+.btn-danger{background:var(--enemy);color:#fff;font-family:'Anton',sans-serif;letter-spacing:.04em;text-transform:uppercase}
+
+/* ---------- TOASTS ---------- */
+#toasts{position:fixed;left:0;right:0;top:env(safe-area-inset-top,0);z-index:90;display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 16px;pointer-events:none}
+.toast{
+  max-width:var(--maxw);width:100%;display:flex;align-items:center;gap:10px;
+  padding:13px 16px;border-radius:12px;
+  background:var(--panel);border:1px solid var(--accent);
+  box-shadow:0 16px 40px -16px rgba(0,0,0,.7);
+  font-size:var(--fs-body);font-weight:600;
+  animation:toastIn .3s ease, toastOut .3s ease 2.3s forwards;
+}
+.toast.badge{border-color:var(--gold)}
+.toast .ti{flex:0 0 auto;width:26px;height:26px;color:var(--accent-bright)}
+.toast.badge .ti{color:var(--gold)}
+.toast .ti svg{width:100%;height:100%}
+@keyframes toastIn{from{transform:translateY(-20px);opacity:0}to{transform:none;opacity:1}}
+@keyframes toastOut{to{transform:translateY(-20px);opacity:0}}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+  .hero-panel::before{animation:none}
+}
+</style>
+</head>
+<body>
+<div id="app" aria-live="polite"></div>
+
+<!-- Mission reveal bottom-sheet (single shared instance) -->
+<div class="sheet-scrim" id="scrim"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Practice on the pitch"></div>
+
+<!-- Reset confirm modal -->
+<div class="modal-scrim" id="resetScrim">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="resetTitle">
+    <h3 id="resetTitle">Reset progress?</h3>
+    <p>This clears your XP, badges and everything you've opened on this device. It can't be undone.</p>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="resetCancel">Keep it</button>
+      <button class="btn-danger" id="resetConfirm">Reset</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts" aria-live="assertive"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<script>
+"use strict";
+/* =====================================================================
+   DATA
+   ===================================================================== */
+const STORAGE_KEY = "football-blast-engine-room";
+
+const CONCEPTS = [
+  {
+    id:"scanning", week:5, icon:"eye",
+    name:"Scanning & Turning", tagline:"Know what's coming",
+    bigIdeaLine:"Know what's coming before the ball arrives.",
+    quote:"Scan. Receive. Turn.",
+    bigIdea:"The best midfielders look around before the ball gets to them. They scan, checking who's behind, who's open, where the space is. By the time the ball arrives, they've already decided what to do. Their first touch isn't a control. It's a turn into space. The slow players take a touch and then look. The fast players look first, then take the touch that helps them most.",
+    cues:[
+      "Every time the ball is about to come to you",
+      "Before, during, and after receiving",
+      "Especially when you're in the middle of the pitch with players behind you",
+      "When you hear \u201cman on\u201d from a teammate"
+    ],
+    teamTask:"Can midfielders find space to receive and turn?",
+    teaches:"Scanning is the first step of the Action Loop: see what's happening before the ball arrives. It's what separates midfielders who control the game from those who chase it. The boys who scan early have time. The boys who don't are always rushed."
+  },
+  {
+    id:"switch", week:6, icon:"switch",
+    name:"The Switch", tagline:"Move it. Move them.",
+    bigIdeaLine:"Move the ball to where they aren't.",
+    quote:"Suck them in. Switch it out.",
+    bigIdea:"When the opponent crowds one side of the pitch, the other side opens up. The switch is the move that punishes them for over-committing. A quick two-touch combination, or a long diagonal pass, gets the ball across the pitch faster than defenders can shift. The far winger waits wide, doesn't drift in, and receives in space. Switch the play, win the moment.",
+    cues:[
+      "The opponent is loaded on one side of the pitch",
+      "The far winger has space and is alone with a defender",
+      "You have time on the ball and the path forward is blocked",
+      "A teammate calls for the switch"
+    ],
+    teamTask:"If the path is blocked, can we find the player on the other side?",
+    teaches:"The Switch is one of the most reliable ways to break a well-organised defence. The opponent can't be strong everywhere. When they commit to one side, the other side is gold. Master the switch and you can keep the ball against tough opponents."
+  },
+  {
+    id:"pcb", week:7, icon:"triangle",
+    name:"Pressure \u00b7 Cover \u00b7 Balance", tagline:"Defend as a three",
+    bigIdeaLine:"Defend as a three. Every time.",
+    quote:"Pressure. Cover. Balance.", quoteSub:"PCB.",
+    bigIdea:"You don't defend alone. You defend as a unit of three. The 1st defender pressures the ball, slowing the attack. The 2nd defender covers behind, blocking the easy splitting pass. The 3rd defender balances on the far side, protecting the middle of the pitch. If one piece is missing, the whole structure breaks. Know which role you are. Know what the others should be doing. Talk to each other.",
+    cues:[
+      "Any time the opponent has the ball in your half",
+      "When you see a teammate going to press, you become the cover",
+      "When two teammates are committed to one side, you become the balance",
+      "When the ball is closer to you than to your teammates, you become the pressure"
+    ],
+    teamTask:"To prevent the opponent from playing forward by working together (Pressure, Cover, Balance).",
+    teaches:"PCB is the foundation of every defensive moment in football. From U11 to the World Cup, the same principle holds: defend as a three, not as individuals. If you can play your role and trust your teammates to play theirs, you can defend against anyone."
+  },
+  {
+    id:"interception", week:8, icon:"intercept",
+    name:"Interception", tagline:"Read the eyes",
+    bigIdeaLine:"Read the play before it happens.",
+    quote:"Read the eyes. Read the hips.",
+    bigIdea:"Interception is reading the future. The passer's eyes tell you where they want to go. Their hips tell you where the pass is actually heading. Wait too long and you're chasing. Step too early and you've lost your position. The sweet spot: read the cues, take a small step in front, and meet the ball as the pass is made. Don't dive in. Trust the read.",
+    cues:[
+      "When the passer has a heavy touch and needs to look up",
+      "When the passer's body is fully open to make a long pass",
+      "When the receiver hasn't moved yet, they're a sitting target",
+      "When you have a teammate covering behind you (so you can take the risk)"
+    ],
+    teamTask:"Can we read the passer's eyes to intercept the ball?",
+    teaches:"Interception turns defending into attacking. A clean interception isn't just stopping their play. It's launching yours. The best interceptors don't tackle more, they see more. They read what's coming and arrive a second early. That second is the difference."
+  }
+];
+
+/* Missions: verbatim from Mission_cards__2.docx, Block 2 (Weeks 5-8).
+   Mission code names + one-line descriptions only. Targets intentionally omitted (paper handles those). */
+const MISSIONS = {
+  scanning:{
+    main:[
+      {name:"The Owl", desc:"Before the ball arrives at your feet, you must SCAN (check your shoulder) to see what is behind you."},
+      {name:"The Ghost", desc:"Do not stand still behind a defender. If you are blocked, move into a \u201cWindow\u201d (gap)."},
+      {name:"The X-Ray", desc:"Receive the ball on your \u201cBack Foot\u201d (half-turn) so you can see the strikers immediately."}
+    ],
+    bonus:{name:"The Recovery", desc:"If we lose the ball, you have 3 seconds to win it back. Sprint! Don't sulk!"}
+  },
+  switch:{
+    main:[
+      {name:"Chalk On Boots", desc:"(Wingers) Stand on the touchline. Stay wide until the ball comes to you. Be patient!"},
+      {name:"The Bridge", desc:"(Midfielders) Do not hold the ball. Receive from the left, pass to the right. Fast!"},
+      {name:"The Long Look", desc:"Before you pass short, look long. Is the winger on the other side open?"}
+    ],
+    bonus:{name:"The Overload", desc:"If the ball comes to your side, attack 2v1 immediately."}
+  },
+  pcb:{
+    main:[
+      {name:"The Slide", desc:"Imagine a rope ties you to your defensive partners. If the ball moves left, you ALL slide left."},
+      {name:"The Balance", desc:"(Far Defender) If the ball is on the other side, tuck inside to protect the middle."},
+      {name:"The Wall", desc:"Do not let the opponent play through the middle. Force them to pass wide."}
+    ],
+    bonus:{name:"The Clearance", desc:"If the ball drops in the box, kick it high and wide!"}
+  },
+  interception:{
+    main:[
+      {name:"The Patience", desc:"Do not dive in! Stand off and wait for them to try a pass."},
+      {name:"The Read", desc:"Watch the passer's hips. Where are they pointing? Move there before they kick it."},
+      {name:"The Steal", desc:"Step in FRONT of the receiver aggressively. Take the ball, don't kick the player."}
+    ],
+    bonus:{name:"The Counter", desc:"As soon as you intercept, play forward immediately!"}
+  }
+};
+
+/* Brain-Tester pool: 12 questions. correct answer first in `a`, index in `c`.
+   Distractors are constructed wrong options (not source content). Options are shuffled at runtime. */
+const BRAIN_TESTER = [
+  {q:"Before the ball arrives to you, what should you do?",
+   a:["Scan over your shoulder","Call for it and stand still","Put your head down and watch the ball"], c:0},
+  {q:"When you receive the ball as a midfielder, which foot should you receive on?",
+   a:["The back foot (the one facing forward)","The foot facing your own goal","Whichever foot is nearest the ball"], c:0},
+  {q:"What does \u201cscan\u201d mean?",
+   a:["Look around to check where players and space are","Shout for the ball as loud as you can","Dribble at the nearest defender"], c:0},
+  {q:"The Switch is best used when...",
+   a:["The opponent is loaded on one side of the pitch","You're defending your own corner","You're one-on-one with the keeper"], c:0},
+  {q:"When you switch the play, the receiving winger should...",
+   a:["Stay wide and wait for the ball","Drift into the middle to get closer","Run back to help defend"], c:0},
+  {q:"In Pressure \u00b7 Cover \u00b7 Balance, what does the 1st defender do?",
+   a:["Press the ball, delay the attack","Drop deep to mark the striker","Stay out on the far touchline"], c:0},
+  {q:"The 2nd defender's job is to...",
+   a:["Cover behind the 1st defender, block the splitting pass","Sprint past to win the ball first","Mark the goalkeeper"], c:0},
+  {q:"The 3rd defender is on the far side of the pitch. Their job is...",
+   a:["Balance: tuck inside, protect the middle","Press the ball straight away","Stay wide on the touchline"], c:0},
+  {q:"Should you dive in for the tackle?",
+   a:["No, wait for the heavy touch or a clear cue","Yes, always tackle as hard as you can","Yes, the moment they get the ball"], c:0},
+  {q:"To intercept, what should you read first?",
+   a:["The passer's eyes and hips","The crowd on the sideline","The referee's whistle"], c:0},
+  {q:"Why do midfielders rotate positions?",
+   a:["To find space and confuse defenders","To take a rest during the game","To stay in exactly the same spot"], c:0},
+  {q:"If the path forward is blocked, what's the next-best option?",
+   a:["Switch the ball to the other side","Boot it long and hope","Stop and wait for a foul"], c:0}
+];
+
+const IQ_LABELS = [
+  {min:0,label:"Building"},{min:3,label:"Sharp"},{min:5,label:"Sharper"},{min:7,label:"Razor"},{min:8,label:"Genius"}
+];
+function iqFor(score){let l="Building";for(const t of IQ_LABELS){if(score>=t.min)l=t.label;}return l;}
+
+const BADGES = [
+  {id:"first-whistle", name:"First Whistle", desc:"You've started."},
+  {id:"all-concepts-read", name:"All Concepts Read", desc:"You've covered the ground."},
+  {id:"animator", name:"Animator", desc:"You watched the game."},
+  {id:"sharp-mind", name:"Sharp Mind", desc:"Tactically razor."},
+  {id:"engine-master", name:"Engine Master", desc:"You own the middle."}
+];
+
+const RANKS = [
+  {min:600,name:"Engine Master"},{min:400,name:"Master"},{min:200,name:"Specialist"},{min:0,name:"Recruit"}
+];
+function rankFor(xp){for(const r of RANKS){if(xp>=r.min)return r.name;}return "Recruit";}
+
+const XP = {concept:50, animation:25, btCorrect:20, btFirst:100, btRazor:200};
+
+/* =====================================================================
+   STATE
+   ===================================================================== */
+function defaultState(){
+  return {
+    firstOpen:null, xp:0,
+    conceptsOpened:[], animationsWatched:[],
+    brainTesterScores:[], badgesEarned:[],
+    soundEnabled:true,
+    _btUnlockSeen:false   // internal UI flag (not part of the documented model)
+  };
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return defaultState();
+    return Object.assign(defaultState(), JSON.parse(raw));
+  }catch(e){ return defaultState(); }
+}
+function saveState(s){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }catch(e){} }
+
+let state = loadState();
+
+/* merge patch, save, then run badge checks */
+function updateState(patch){
+  state = Object.assign({}, state, patch);
+  saveState(state);
+  checkBadges();
+}
+
+function addXP(amount){ state.xp = (state.xp||0) + amount; saveState(state); }
+
+function checkBadges(){
+  const earned = new Set(state.badgesEarned||[]);
+  const grant = id=>{
+    if(!earned.has(id)){
+      earned.add(id);
+      state.badgesEarned = Array.from(earned);
+      saveState(state);
+      const b = BADGES.find(x=>x.id===id);
+      celebrate();
+      playSound("badge");
+      toast(`BADGE: ${b.name.toUpperCase()}`, "badge");
+    }
+  };
+  if(state.firstOpen) grant("first-whistle");
+  if((state.conceptsOpened||[]).length>=4) grant("all-concepts-read");
+  if((state.animationsWatched||[]).length>=4) grant("animator");
+  if((state.brainTesterScores||[]).some(s=>s.score>=7)) grant("sharp-mind");
+  const core = ["first-whistle","all-concepts-read","animator","sharp-mind"];
+  if(core.every(id=>earned.has(id))) grant("engine-master");
+}
+
+/* =====================================================================
+   FEEDBACK: toasts, confetti, sound
+   ===================================================================== */
+const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function toast(text, type){
+  const wrap = document.getElementById("toasts");
+  const el = document.createElement("div");
+  el.className = "toast" + (type==="badge" ? " badge" : "");
+  const icon = type==="badge" ? ICONS.trophy : ICONS.spark;
+  el.innerHTML = `<span class="ti">${icon}</span><span>${text}</span>`;
+  wrap.appendChild(el);
+  setTimeout(()=>el.remove(), 2700);
+}
+function xpToast(amount, label){ toast(`+${amount} XP \u00b7 ${label}`); }
+
+function celebrate(){
+  if(typeof confetti !== "function") return;
+  const count = reduceMotion ? 30 : 120;
+  confetti({particleCount:count, spread:70, origin:{y:0.25},
+    colors:["#1a4ed8","#5b86f0","#ffc857","#eaf1f7"]});
+  if(!reduceMotion){
+    setTimeout(()=>confetti({particleCount:60,angle:60,spread:55,origin:{x:0,y:.4},colors:["#1a4ed8","#ffc857"]}),120);
+    setTimeout(()=>confetti({particleCount:60,angle:120,spread:55,origin:{x:1,y:.4},colors:["#5b86f0","#ffc857"]}),240);
+  }
+}
+
+/* Web Audio sound cues */
+let audioCtx = null;
+function ensureAudio(){
+  if(!audioCtx){
+    try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ audioCtx=null; }
+  }
+  if(audioCtx && audioCtx.state==="suspended"){ audioCtx.resume(); }
+}
+document.addEventListener("pointerdown", ensureAudio, {once:false});
+function tone(freq, start, dur, type, vol){
+  if(!audioCtx) return;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type||"sine"; o.frequency.value = freq;
+  o.connect(g); g.connect(audioCtx.destination);
+  const t = audioCtx.currentTime + start;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(vol||0.12, t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.start(t); o.stop(t+dur+0.02);
+}
+function playSound(kind){
+  if(!state.soundEnabled) return;
+  ensureAudio();
+  if(!audioCtx) return;
+  switch(kind){
+    case "xp":      tone(660,0,.12,"triangle",.10); break;
+    case "badge":   [523,659,784,1047].forEach((f,i)=>tone(f,i*0.09,.22,"triangle",.12)); break;
+    case "unlock":  [392,523,659,880].forEach((f,i)=>tone(f,i*0.08,.26,"sawtooth",.10)); break;
+    case "correct": tone(700,0,.12,"sine",.12); tone(950,.1,.14,"sine",.10); break;
+    case "wrong":   tone(220,0,.18,"square",.08); break;
+    case "tap":     tone(520,0,.06,"sine",.07); break;
+  }
+}
+
+/* =====================================================================
+   ICONS (inline SVG, monochrome, currentColor)
+   ===================================================================== */
+const ICONS = {
+  eye:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  switch:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/></svg>`,
+  triangle:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7 6 17M12 7l6 10M7 19h10"/></svg>`,
+  intercept:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h7M15 12h7"/><path d="m9 8 3 4-3 4" /><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>`,
+  arrow:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>`,
+  back:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>`,
+  replay:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>`,
+  lock:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`,
+  brain:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 1 5 3 3 0 0 0 4 2V3Z"/><path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-1 5 3 3 0 0 1-4 2V3Z"/></svg>`,
+  gear:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 7 2.6h.1A1.7 1.7 0 0 0 9 1.1V1a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 17 2.6a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.6 1Z"/></svg>`,
+  close:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>`,
+  trophy:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4Z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>`,
+  spark:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/></svg>`,
+  check:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`
+};
+
+/* =====================================================================
+   PITCH ANIMATIONS  (vertical/portrait pitch; movement on the attacking axis)
+   Tokens are <g> pieces moved via CSS transform transitions on a JS timeline.
+   viewBox 0 0 300 340 ; middle third highlighted ; goal + direction labelled.
+   ===================================================================== */
+const TEAM = "#3b6bf0", OPP = "#e0566c", BALL = "#ffffff", HOT = "#ffc857";
+
+function vpitch(goalAtBottom, topLabel, bottomLabel){
+  const box = goalAtBottom
+    ? `<rect x="90" y="292" width="120" height="40" fill="none" stroke="#2a3c5c" stroke-width="2"/>
+       <line x1="120" y1="332" x2="180" y2="332" stroke="#46608f" stroke-width="5"/>`
+    : `<rect x="90" y="8" width="120" height="40" fill="none" stroke="#2a3c5c" stroke-width="2"/>
+       <line x1="120" y1="8" x2="180" y2="8" stroke="#46608f" stroke-width="5"/>`;
+  return `
+    <rect x="8" y="8" width="284" height="324" rx="10" fill="#0a1426" stroke="#1e2c45" stroke-width="2"/>
+    <rect x="8" y="116" width="284" height="108" fill="#1a4ed8" opacity="0.10"/>
+    <line x1="8" y1="116" x2="292" y2="116" stroke="#1a4ed8" stroke-width="1" opacity="0.30" stroke-dasharray="4 4"/>
+    <line x1="8" y1="224" x2="292" y2="224" stroke="#1a4ed8" stroke-width="1" opacity="0.30" stroke-dasharray="4 4"/>
+    <line x1="8" y1="170" x2="292" y2="170" stroke="#2a3c5c" stroke-width="2"/>
+    <circle cx="150" cy="170" r="28" fill="none" stroke="#2a3c5c" stroke-width="2"/>
+    <circle cx="150" cy="170" r="3" fill="#2a3c5c"/>
+    ${box}
+    <text x="150" y="26" text-anchor="middle" font-family="Anton,sans-serif" font-size="11" fill="#5b86f0" letter-spacing="2">${topLabel}</text>
+    <text x="150" y="320" text-anchor="middle" font-family="Anton,sans-serif" font-size="11" fill="#5b86f0" letter-spacing="2">${bottomLabel}</text>`;
+}
+function ap(id,x,y,color,label,extra){
+  return `<g id="${id}" class="apiece" style="transform:translate(${x}px,${y}px)${extra||""}">
+    <circle r="11" fill="${color}" stroke="#0a1426" stroke-width="2"/>
+    ${label?`<text y="4" text-anchor="middle" font-family="Anton,sans-serif" font-size="12" fill="#0a1426">${label}</text>`:""}
+  </g>`;
+}
+function ab(id,x,y){ return `<g id="${id}" class="aball" style="transform:translate(${x}px,${y}px)"><circle r="6" fill="${BALL}" stroke="#0a1426" stroke-width="1.5"/></g>`; }
+function svgV(label,inner){
+  return `<svg viewBox="0 0 300 340" role="img" aria-label="${label}" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+}
+
+/* Each animation: { dur, cap, svg(), steps(g) -> [{at, do}] } */
+const ANIM = {
+  scanning:{
+    dur:4700,
+    cap:"Scan your shoulders \u2192 receive on the back foot \u2192 turn and play forward.",
+    svg(){
+      return svgV("A midfielder scans, receives on the back foot, and turns to play forward.",
+        vpitch(false,"THEIR GOAL \u2191","OUR HALF")+
+        ap("scO1",118,150,OPP)+ap("scO2",186,150,OPP)+
+        ap("scBack",150,290,TEAM)+ab("scBall",150,282)+
+        ap("scMid",150,205,TEAM)+
+        `<line id="scLane" class="alane fwd" pathLength="1" x1="150" y1="194" x2="150" y2="80"/>`+
+        `<g id="scFace" style="transform:translate(150px,205px) rotate(0deg);transition:transform .7s cubic-bezier(.3,.9,.3,1)">
+           <path d="M0 13 L0 30" stroke="${HOT}" stroke-width="3" stroke-linecap="round"/>
+           <path d="M-5 24 L0 30 L5 24" fill="none" stroke="${HOT}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+         </g>`+
+        `<g style="transform:translate(150px,205px)">
+           <polygon class="glance gL" points="0,0 -40,-8 -8,-40" fill="#5b86f0"/>
+           <polygon class="glance gR" points="0,0 40,-8 8,-40" fill="#5b86f0"/>
+         </g>`
+      );
+    },
+    steps(g){
+      const mv=(id,x,y)=>{const e=g.querySelector("#"+id); if(e) e.style.transform=`translate(${x}px,${y}px)`;};
+      return [
+        {at:1500, do:()=>mv("scBall",150,214)},
+        {at:2300, do:()=>{const e=g.querySelector("#scFace"); if(e) e.style.transform="translate(150px,205px) rotate(180deg)";}},
+        {at:3100, do:()=>{const l=g.querySelector("#scLane"); if(l) l.style.strokeDashoffset="0"; mv("scBall",150,140);}}
+      ];
+    }
+  },
+  switch:{
+    dur:4200,
+    cap:"Forward pass is marked out \u2192 switch to the free player on the far side.",
+    svg(){
+      return svgV("The forward pass is tightly marked, so the ball is switched across to a winger waiting wide.",
+        vpitch(false,"THEIR GOAL \u2191","OUR HALF")+
+        // opponents loaded on the ball side
+        `<g id="swOpp" class="apiece" style="transform:translate(0px,0px)">
+           <circle cx="108" cy="188" r="11" fill="${OPP}" stroke="#0a1426" stroke-width="2"/>
+           <circle cx="120" cy="170" r="11" fill="${OPP}" stroke="#0a1426" stroke-width="2"/>
+           <circle cx="146" cy="150" r="11" fill="${OPP}" stroke="#0a1426" stroke-width="2"/>
+         </g>`+
+        // blocked forward option: dashed (attempted) pass up the lane, cut out
+        `<line id="swBlock" x1="80" y1="224" x2="80" y2="165" stroke="${OPP}" stroke-width="2" stroke-dasharray="4 5" opacity=".55"/>`+
+        `<text x="80" y="186" text-anchor="middle" font-family="Anton,sans-serif" font-size="15" fill="${OPP}" opacity=".9">\u2715</text>`+
+        // forward teammate in the ball-carrier's lane, tightly marked
+        ap("swMark",80,150,OPP)+
+        ap("swFwd",80,128,TEAM)+
+        // far winger waiting wide and free
+        `<circle id="swRing" class="afade" cx="258" cy="132" r="16" fill="none" stroke="${HOT}" stroke-width="2"/>`+
+        ap("swW",258,132,TEAM)+
+        // central mid + ball-carrier
+        ap("swC",150,198,TEAM)+ap("swL",80,238,TEAM)+
+        `<line id="swLane" class="alane" pathLength="1" x1="150" y1="193" x2="252" y2="134"/>`+
+        ab("swBall",80,229)
+      );
+    },
+    steps(g){
+      const mv=(id,x,y)=>{const e=g.querySelector("#"+id); if(e) e.style.transform=`translate(${x}px,${y}px)`;};
+      return [
+        {at:900,  do:()=>mv("swBall",150,191)},
+        {at:1700, do:()=>{const l=g.querySelector("#swLane"); if(l) l.style.strokeDashoffset="0"; mv("swBall",258,127);}},
+        {at:2400, do:()=>mv("swOpp",58,4)},
+        {at:3000, do:()=>{const r=g.querySelector("#swRing"); if(r) r.classList.add("on");}}
+      ];
+    }
+  },
+  pcb:{
+    dur:4400,
+    cap:"Defend as a three: 1 presses, 2 covers behind, 3 balances inside.",
+    svg(){
+      return svgV("Three defenders form a unit (pressure, cover and balance) in front of their own goal.",
+        vpitch(true,"OPPONENT \u2193","OUR GOAL")+
+        `<line id="pcbDanger" class="alane" style="stroke:${OPP};stroke-width:1.5;opacity:.6" pathLength="1" x1="150" y1="104" x2="150" y2="330"/>`+
+        ap("pcbA1",150,92,OPP)+ap("pcbA2",232,92,OPP)+ab("pcbBall",150,104)+
+        ap("pcbD1",150,160,TEAM,"1")+ap("pcbD2",92,215,TEAM,"2")+ap("pcbD3",240,228,TEAM,"3")+
+        `<g class="afade" id="pcbLabels" font-family="Anton,sans-serif" font-size="10" fill="#5b86f0">
+           <text x="150" y="120" text-anchor="middle">PRESSURE</text>
+           <text x="86"  y="150" text-anchor="middle">COVER</text>
+           <text x="182" y="200" text-anchor="middle">BALANCE</text>
+         </g>`
+      );
+    },
+    steps(g){
+      const mv=(id,x,y)=>{const e=g.querySelector("#"+id); if(e) e.style.transform=`translate(${x}px,${y}px)`;};
+      return [
+        {at:200,  do:()=>{const d=g.querySelector("#pcbDanger"); if(d) d.style.strokeDashoffset="0";}},
+        {at:900,  do:()=>mv("pcbD1",150,128)},
+        {at:1700, do:()=>mv("pcbD2",118,168)},
+        {at:2500, do:()=>mv("pcbD3",176,210)},
+        {at:3200, do:()=>{const l=g.querySelector("#pcbLabels"); if(l) l.classList.add("on");}}
+      ];
+    }
+  },
+  interception:{
+    dur:4200,
+    cap:"Read the eyes \u2192 read the hips \u2192 step in front and take it.",
+    svg(){
+      return svgV("A defender reads the passer, steps in front of the receiver and intercepts.",
+        vpitch(true,"OPPONENT \u2193","OUR GOAL")+
+        // passer high, receiver running forward (down) toward our goal
+        ap("icPass",105,120,OPP)+ab("icBall",114,126)+ap("icRec",205,205,OPP)+
+        // sightline (eyes): passer -> receiver, running down toward our goal
+        `<line id="icEye" class="alane" style="stroke:${HOT};opacity:.9" pathLength="1" x1="114" y1="126" x2="197" y2="198"/>`+
+        // hips arrow squaring to the pass (points down toward the receiver)
+        `<g id="icHips" class="afade" style="transform:translate(105px,120px)">
+           <path d="M0 0 L24 16" stroke="#5b86f0" stroke-width="3" stroke-linecap="round"/>
+           <path d="M15 15 L24 16 L20 8" fill="none" stroke="#5b86f0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+         </g>`+
+        // defender steps into the lane, in front of the receiver
+        ap("icDef",150,190,TEAM)+
+        `<g id="icTag" class="afade"><rect x="148" y="58" width="104" height="22" rx="6" fill="${TEAM}"/>
+           <text x="200" y="73" text-anchor="middle" font-family="Anton,sans-serif" font-size="12" fill="#fff">INTERCEPTED</text></g>`
+      );
+    },
+    steps(g){
+      const mv=(id,x,y)=>{const e=g.querySelector("#"+id); if(e) e.style.transform=`translate(${x}px,${y}px)`;};
+      const on=(id)=>{const e=g.querySelector("#"+id); if(e) e.classList.add("on");};
+      return [
+        {at:200,  do:()=>{const l=g.querySelector("#icEye"); if(l) l.style.strokeDashoffset="0";}},
+        {at:1000, do:()=>on("icHips")},
+        {at:1800, do:()=>mv("icDef",168,162)},
+        {at:2600, do:()=>mv("icBall",168,162)},
+        {at:3200, do:()=>on("icTag")}
+      ];
+    }
+  }
+};
+
+/* Run an animation: (re)inject fresh SVG (instant reset), then drive the timeline. */
+function runAnim(stage, id, isFirst){
+  const a = ANIM[id];
+  const holder = stage.querySelector(".anim-holder");
+  if(!holder || !a) return;
+  (stage._timers||[]).forEach(clearTimeout);
+  stage._timers = [];
+  holder.innerHTML = a.svg();
+  void holder.offsetWidth; // commit start transforms before transitions run
+  a.steps(holder).forEach(s=>{ stage._timers.push(setTimeout(s.do, s.at)); });
+  if(isFirst && !state.animationsWatched.includes(id)){
+    stage._timers.push(setTimeout(()=>{
+      if(!state.animationsWatched.includes(id)){
+        updateState({animationsWatched:[...state.animationsWatched, id]});
+        addXP(XP.animation);
+        xpToast(XP.animation, "ANIMATION WATCHED");
+        playSound("xp");
+      }
+    }, a.dur));
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Interactive Pressure-Cover-Balance diagram (ported from the reference)
+   Tap a job (1/2/3) and the matching defender lights up; "Move ball"
+   switches the ball side and the jobs swap + the unit tilts.
+   --------------------------------------------------------------------- */
+const PCB_STATES = {
+  L:{ball:[108,68], danger:[95,55],  X:[112,102,1], Y:[152,140,2], Z:[225,152,3]},
+  R:{ball:[232,68], danger:[245,55], X:[115,152,3], Y:[188,140,2], Z:[228,102,1]}
+};
+const PCB_ROLES = [
+  {k:"1st Defender: Pressure", d:"Closest to the ball. Your job: pressure the ball, close down the space, DELAY the attack. You're the tip of the spear."},
+  {k:"2nd Defender: Cover",    d:"You support BEHIND the 1st defender, guarding the space around the ball. Your job: block the splitting pass so they can't play through you."},
+  {k:"3rd Defender: Balance",  d:"You guard the space AWAY from the ball and protect the most dangerous area, the middle. You see everything; talk."}
+];
+function pcbDiagram(){
+  return `
+  <div class="pcbwrap">
+    <svg viewBox="0 0 340 250" role="img" aria-label="Pressure, cover, balance: tap a job, then move the ball to see the roles swap.">
+      <rect x="6" y="6" width="328" height="238" fill="none" stroke="rgba(234,241,247,.22)" stroke-width="1.5" rx="4"/>
+      <rect x="110" y="200" width="120" height="44" fill="none" stroke="rgba(234,241,247,.22)" stroke-width="1.5"/>
+      <line x1="140" y1="244" x2="200" y2="244" stroke="#46608f" stroke-width="5"/>
+      <text x="170" y="237" text-anchor="middle" font-size="9" fill="#8fa3bd" font-family="Inter,sans-serif" letter-spacing="2">OUR GOAL</text>
+      <line id="pcbDanger" x1="95" y1="60" x2="168" y2="240" stroke="${OPP}" stroke-width="1.4" stroke-dasharray="3 4" opacity=".6"/>
+      <circle cx="95" cy="55" r="13" fill="${OPP}"/><text x="95" y="59" text-anchor="middle" font-size="11" font-weight="bold" fill="#2a0707">A</text>
+      <circle cx="245" cy="55" r="13" fill="${OPP}" opacity=".7"/><text x="245" y="59" text-anchor="middle" font-size="11" font-weight="bold" fill="#2a0707">A</text>
+      <circle id="pcbBall" class="pcb-ball" r="4.5" fill="#ffffff" style="transform:translate(108px,68px)"/>
+      <g id="pcbX" class="pcb-piece" style="transform:translate(112px,102px)"><circle r="13" fill="#101c31" stroke="#223251" stroke-width="2"/><text y="4" text-anchor="middle" font-size="11" font-weight="bold" fill="#eaf1f7">1</text></g>
+      <g id="pcbY" class="pcb-piece" style="transform:translate(152px,140px)"><circle r="13" fill="#101c31" stroke="#223251" stroke-width="2"/><text y="4" text-anchor="middle" font-size="11" font-weight="bold" fill="#eaf1f7">2</text></g>
+      <g id="pcbZ" class="pcb-piece" style="transform:translate(225px,152px)"><circle r="13" fill="#101c31" stroke="#223251" stroke-width="2"/><text y="4" text-anchor="middle" font-size="11" font-weight="bold" fill="#eaf1f7">3</text></g>
+      <text x="170" y="24" text-anchor="middle" font-size="9" fill="#5b86f0" font-family="Inter,sans-serif" letter-spacing="2">OPPONENT ATTACKERS</text>
+    </svg>
+    <div class="pcb-dbtns">
+      <button class="pcb-dbtn" data-d="0">1 \u00b7 Press</button>
+      <button class="pcb-dbtn" data-d="1">2 \u00b7 Cover</button>
+      <button class="pcb-dbtn" data-d="2">3 \u00b7 Balance</button>
+      <button class="pcb-dbtn amb" id="pcbMoveBall">\u21c4 Move ball</button>
+    </div>
+    <div class="pcb-reveal" id="pcbReveal"><div class="rt">Tap a job, then move the ball</div>The red dotted line is the danger line: ball to our goal. Watch what happens to the numbers when the ball switches sides.</div>
+    <div class="pcb-callout"><b>IT MOVES:</b> these aren't fixed shirts. The ball moves, the jobs swap. Whoever is nearest the ball becomes the 1st defender. One goes, the others tilt.</div>
+  </div>`;
+}
+function wirePCB(){
+  const P = {X:document.getElementById("pcbX"), Y:document.getElementById("pcbY"), Z:document.getElementById("pcbZ")};
+  const ball = document.getElementById("pcbBall"), dl = document.getElementById("pcbDanger");
+  if(!P.X || !ball) return;
+  let pcbState = "L", pcbRole = -1;
+  function paint(){
+    const st = PCB_STATES[pcbState];
+    ball.style.transform = `translate(${st.ball[0]}px,${st.ball[1]}px)`;
+    dl.setAttribute("x1", st.danger[0]); dl.setAttribute("y1", st.danger[1]);
+    ["X","Y","Z"].forEach(k=>{
+      const [x,y,role] = st[k]; const g = P[k];
+      g.style.transform = `translate(${x}px,${y}px)`;
+      const c = g.querySelector("circle"), t = g.querySelector("text");
+      t.textContent = role;
+      const on = (role-1) === pcbRole;
+      c.setAttribute("fill",   on ? "#43f08f" : "#101c31");
+      c.setAttribute("stroke", on ? "#43f08f" : "#223251");
+      t.setAttribute("fill",   on ? "#04130a" : "#eaf1f7");
+    });
+  }
+  paint();
+  const markWatched = ()=>{
+    if(!state.animationsWatched.includes("pcb")){
+      updateState({animationsWatched:[...state.animationsWatched, "pcb"]});
+      addXP(XP.animation); xpToast(XP.animation, "ANIMATION WATCHED"); playSound("xp");
+    }
+  };
+  document.querySelectorAll(".pcb-dbtn[data-d]").forEach(b=>{ b.onclick = ()=>{
+    playSound("tap"); markWatched();
+    pcbRole = Number(b.dataset.d);
+    document.querySelectorAll(".pcb-dbtn[data-d]").forEach(x=>x.classList.toggle("sel", Number(x.dataset.d)===pcbRole));
+    document.getElementById("pcbReveal").innerHTML = `<div class="rt">${PCB_ROLES[pcbRole].k}</div>${PCB_ROLES[pcbRole].d}`;
+    paint();
+  };});
+  document.getElementById("pcbMoveBall").onclick = ()=>{
+    playSound("tap"); markWatched();
+    pcbState = pcbState==="L" ? "R" : "L"; paint();
+  };
+}
+
+/* =====================================================================
+   RENDER HELPERS
+   ===================================================================== */
+const app = document.getElementById("app");
+function go(hash){ location.hash = hash; }
+function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function conceptStatus(id){
+  const opened = state.conceptsOpened.includes(id);
+  const watched = state.animationsWatched.includes(id);
+  if(watched) return {cls:"starred", mark:"\u2605"};
+  if(opened) return {cls:"opened", mark:"\u2713"};
+  return {cls:"", mark:"\u25cb"};
+}
+
+/* =====================================================================
+   SCREEN 1 - LANDING
+   ===================================================================== */
+function renderLanding(){
+  const firstTime = !state.firstOpen;
+  if(firstTime){
+    updateState({firstOpen:new Date().toISOString()}); // grants First Whistle via checkBadges
+  }
+  app.innerHTML = `
+    <div class="screen">
+      <div class="wordmark">FOOTBALL <b>BLAST</b></div>
+      <div class="hero">
+        <h1 class="hero-title">THE ENGINE<br>ROOM</h1>
+        <div class="tagline">Where games are won and lost</div>
+        <div class="pitch-wrap">
+          ${heroPitch()}
+        </div>
+        <div class="hero-panel">
+          <p class="lede">The middle of the pitch is where everything connects. Defenders, midfielders, and attackers all pass through here. Own this space and we control the game.</p>
+          <button class="cta" id="enter">ENTER THE ENGINE ROOM <span>${ICONS.arrow}</span></button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById("enter").addEventListener("click", ()=>{ playSound("tap"); go("#/concepts"); });
+}
+function heroPitch(){
+  return `<svg viewBox="0 0 360 200" role="img" aria-label="A football pitch with the middle third highlighted." xmlns="http://www.w3.org/2000/svg">
+    <rect x="1" y="1" width="358" height="198" rx="12" fill="#0a1426" stroke="#1e2c45" stroke-width="2"/>
+    <rect x="120" y="2" width="120" height="196" fill="#1a4ed8" opacity="0.16"/>
+    <line x1="120" y1="2" x2="120" y2="198" stroke="#5b86f0" stroke-width="1.5" opacity="0.5" stroke-dasharray="5 5"/>
+    <line x1="240" y1="2" x2="240" y2="198" stroke="#5b86f0" stroke-width="1.5" opacity="0.5" stroke-dasharray="5 5"/>
+    <line x1="180" y1="2" x2="180" y2="198" stroke="#2a3c5c" stroke-width="2"/>
+    <circle cx="180" cy="100" r="30" fill="none" stroke="#2a3c5c" stroke-width="2"/>
+    <circle cx="180" cy="100" r="3.5" fill="#5b86f0"/>
+    <rect x="2" y="66" width="36" height="68" fill="none" stroke="#2a3c5c" stroke-width="2"/>
+    <rect x="322" y="66" width="36" height="68" fill="none" stroke="#2a3c5c" stroke-width="2"/>
+    <text x="180" y="190" font-family="Anton,sans-serif" font-size="13" fill="#5b86f0" text-anchor="middle" letter-spacing="2">MIDDLE THIRD</text>
+  </svg>`;
+}
+
+/* =====================================================================
+   SCREEN 2 - CONCEPTS OVERVIEW
+   ===================================================================== */
+function renderConcepts(){
+  const opened = state.conceptsOpened.length;
+  const allOpen = opened >= 4;
+  const justUnlocked = allOpen && !state._btUnlockSeen;
+
+  const cards = CONCEPTS.map(c=>{
+    const st = conceptStatus(c.id);
+    return `<button class="card" data-go="#/concept/${c.id}" aria-label="${esc(c.name)}: ${esc(c.tagline)}">
+      <span class="status ${st.cls}">${st.mark}</span>
+      <span class="ico">${ICONS[c.icon]}</span>
+      <span class="cname">${esc(c.name)}</span>
+      <span class="ctag">${esc(c.tagline)}</span>
+    </button>`;
+  }).join("");
+
+  const btCard = allOpen
+    ? `<button class="bt-card unlocked${justUnlocked?" just-unlocked":""}" data-go="#/brain-tester">
+         <span class="bt-ico">${ICONS.brain}</span>
+         <span class="bt-txt"><span class="bt-title">Brain-Tester</span><span class="bt-sub">Test what you know</span></span>
+       </button>`
+    : `<div class="bt-card locked" aria-disabled="true">
+         <span class="bt-ico">${ICONS.lock}</span>
+         <span class="bt-txt"><span class="bt-title">Locked</span><span class="bt-sub">Open all 4 concepts to unlock \u00b7 ${opened} / 4 opened</span></span>
+       </div>`;
+
+  app.innerHTML = `
+    <div class="screen">
+      <div class="wordmark">FOOTBALL <b>BLAST</b> \u00b7 THE ENGINE ROOM</div>
+      <div class="subhead">Choose your focus</div>
+      <div class="grid">${cards}</div>
+      ${btCard}
+      <div class="foot-row">
+        <div class="rank-chip">
+          <span class="rk">${esc(rankFor(state.xp))}</span>
+          <span class="xp tnum">${state.xp} XP</span>
+        </div>
+        <button class="link-btn" data-go="#/settings">${ICONS.gear} Settings</button>
+      </div>
+    </div>`;
+
+  bindGo();
+
+  if(justUnlocked){
+    celebrate(); playSound("unlock");
+    toast("BRAIN-TESTER UNLOCKED", "badge");
+    updateState({_btUnlockSeen:true});
+  }
+}
+
+/* =====================================================================
+   SCREEN 3 - CONCEPT PAGE
+   ===================================================================== */
+function renderConcept(id){
+  const c = CONCEPTS.find(x=>x.id===id);
+  if(!c){ go("#/concepts"); return; }
+
+  // first open of this concept page -> +50 XP
+  const firstOpen = !state.conceptsOpened.includes(id);
+  if(firstOpen){
+    updateState({conceptsOpened:[...state.conceptsOpened, id]});
+    addXP(XP.concept);
+    xpToast(XP.concept, "CONCEPT OPENED");
+    playSound("xp");
+  }
+
+  const quoteHtml = c.quoteSub
+    ? `<span class="q">${esc(c.quote)}<span class="pcb">${esc(c.quoteSub)}</span></span>`
+    : `<span class="q">${esc(c.quote)}</span>`;
+
+  app.innerHTML = `
+    <div class="screen">
+      <div class="topbar"><button class="back" data-go="#/concepts">${ICONS.back} Concepts</button></div>
+      <h1 class="cp-title display">${esc(c.name)}</h1>
+      <div class="cp-line">${esc(c.bigIdeaLine)}</div>
+
+      ${ id==="pcb" ? pcbDiagram() : `<div class="anim-stage" id="animStage" role="button" tabindex="0" aria-label="Replay the ${esc(c.name)} animation">
+        <div class="anim-holder"></div>
+        <p class="anim-cap">${esc(ANIM[id].cap)}</p>
+        <span class="replay-hint">${ICONS.replay} Replay</span>
+      </div>` }
+
+      <div class="quote">${quoteHtml}<div class="by">Coach</div></div>
+
+      <div class="sec lead">
+        <h2>The Big Idea</h2>
+        <p>${esc(c.bigIdea)}</p>
+      </div>
+
+      <div class="sec">
+        <h2>When To Use It</h2>
+        <ul class="cues">${c.cues.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>
+      </div>
+
+      <div class="sec">
+        <h2>This Week's Team Task</h2>
+        <div class="task-box">
+          <div class="tlabel">Week ${c.week} \u00b7 Team Task</div>
+          <div class="ttext">${esc(c.teamTask)}</div>
+        </div>
+      </div>
+
+      <div class="sec lead">
+        <h2>What This Teaches You</h2>
+        <p>${esc(c.teaches)}</p>
+      </div>
+
+      <button class="reveal-btn" id="revealBtn">Practice On The Pitch ${ICONS.arrow}</button>
+    </div>`;
+
+  bindGo();
+
+  if(id==="pcb"){
+    // interactive diagram (ported from reference) - XP awarded on first interaction
+    wirePCB();
+  } else {
+    // animation: auto-play on first open; replay on tap/key
+    const stage = document.getElementById("animStage");
+    const watchedFirst = state.animationsWatched.includes(id);
+    stage.addEventListener("click", ()=>{ playSound("tap"); runAnim(stage, id, false); });
+    stage.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); playSound("tap"); runAnim(stage, id, false); }});
+    // kick off the first auto-play (counts toward the +25 XP if not yet watched)
+    runAnim(stage, id, !watchedFirst);
+  }
+
+  document.getElementById("revealBtn").addEventListener("click", ()=>{ playSound("tap"); openSheet(id); });
+}
+
+/* Mission reveal bottom-sheet */
+const scrim = document.getElementById("scrim");
+const sheet = document.getElementById("sheet");
+function openSheet(id){
+  const m = MISSIONS[id];
+  const c = CONCEPTS.find(x=>x.id===id);
+  const rows = m.main.map((x,i)=>`
+    <div class="mrow">
+      <span class="mtag">M${i+1}</span>
+      <div class="mbody"><div class="mname">${esc(x.name)}</div><div class="mdesc">${esc(x.desc)}</div></div>
+    </div>`).join("") + `
+    <div class="mrow bonus">
+      <span class="mtag">Bonus</span>
+      <div class="mbody"><div class="mname">${esc(m.bonus.name)}</div><div class="mdesc">${esc(m.bonus.desc)}</div></div>
+    </div>`;
+  sheet.innerHTML = `
+    <div class="sheet-grab"></div>
+    <div class="sheet-head">
+      <div><h3>Practice On The Pitch</h3><div class="sheet-sub">Week ${c.week} \u00b7 Look for these missions on your training card:</div></div>
+      <button class="sheet-close" id="sheetClose" aria-label="Close">${ICONS.close}</button>
+    </div>
+    <div class="mlist">${rows}</div>
+    <div class="sheet-foot">Your coach will let you know when you've hit your targets.</div>`;
+  scrim.classList.add("open");
+  requestAnimationFrame(()=>sheet.classList.add("open"));
+  document.getElementById("sheetClose").addEventListener("click", closeSheet);
+}
+function closeSheet(){ sheet.classList.remove("open"); scrim.classList.remove("open"); }
+scrim.addEventListener("click", closeSheet);
+
+/* =====================================================================
+   SCREEN 4 - BRAIN-TESTER
+   ===================================================================== */
+let btSession = null;
+function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+
+function startBTSession(){
+  const picks = shuffle(BRAIN_TESTER).slice(0,8).map(item=>{
+    const correctText = item.a[item.c];
+    const opts = shuffle(item.a);
+    return {q:item.q, opts, correctIndex:opts.indexOf(correctText)};
+  });
+  btSession = {questions:picks, i:0, score:0, answered:false};
+}
+
+function renderBrainTester(){
+  if(state.conceptsOpened.length < 4){
+    app.innerHTML = `
+      <div class="screen">
+        <div class="topbar"><button class="back" data-go="#/concepts">${ICONS.back} Concepts</button></div>
+        <div class="bt-lock-msg">
+          <div class="lk">${ICONS.lock}</div>
+          <p>Open all 4 concepts to unlock the Brain-Tester.</p>
+          <div class="bt-progress">${state.conceptsOpened.length} / 4 concepts opened</div>
+        </div>
+      </div>`;
+    bindGo();
+    return;
+  }
+  if(!btSession) startBTSession();
+  drawBTQuestion();
+}
+
+function drawBTQuestion(){
+  const s = btSession;
+  const total = s.questions.length;
+  if(s.i >= total){ drawBTResult(); return; }
+  const item = s.questions[s.i];
+  const pct = Math.round((s.i/total)*100);
+  app.innerHTML = `
+    <div class="screen">
+      <div class="topbar"><button class="back" data-go="#/concepts">${ICONS.back} Concepts</button></div>
+      <div class="bt-meta">
+        <span class="qcount tnum">Q <b>${s.i+1}</b> / ${total}</span>
+        <span class="qcount tnum" style="color:var(--gold)">${s.score} \u2713</span>
+      </div>
+      <div class="bt-bar"><i style="width:${pct}%"></i></div>
+      <div class="qtext">${esc(item.q)}</div>
+      <div class="opts" id="opts">
+        ${item.opts.map((o,idx)=>`<button class="opt" data-idx="${idx}"><span class="mk">${String.fromCharCode(65+idx)}.</span>${esc(o)}</button>`).join("")}
+      </div>
+      <div id="fbSlot"></div>
+    </div>`;
+  bindGo();
+  document.querySelectorAll(".opt").forEach(btn=>{
+    btn.addEventListener("click", ()=>answerBT(parseInt(btn.dataset.idx,10)));
+  });
+}
+
+function answerBT(idx){
+  const s = btSession;
+  if(s.answered) return;
+  s.answered = true;
+  const item = s.questions[s.i];
+  const correct = idx === item.correctIndex;
+  if(correct){ s.score++; addXP(XP.btCorrect); }
+  playSound(correct ? "correct" : "wrong");
+
+  document.querySelectorAll(".opt").forEach((btn,i)=>{
+    btn.disabled = true;
+    if(i===item.correctIndex) btn.classList.add("right");
+    else if(i===idx) btn.classList.add("wrong");
+  });
+
+  const fb = document.getElementById("fbSlot");
+  fb.innerHTML = correct
+    ? `<div class="fb ok">Nailed it.</div>`
+    : `<div class="fb no">The right answer was <b>${esc(item.opts[item.correctIndex])}</b>.</div>`;
+
+  const isLast = s.i === s.questions.length - 1;
+  const next = document.createElement("button");
+  next.className = "nextbtn";
+  next.innerHTML = (isLast ? "See Results" : "Next") + " " + ICONS.arrow;
+  next.addEventListener("click", ()=>{ playSound("tap"); s.i++; s.answered=false; drawBTQuestion(); });
+  fb.appendChild(next);
+}
+
+function drawBTResult(){
+  const s = btSession;
+  const score = s.score, total = s.questions.length;
+  const label = iqFor(score);
+
+  // one-time bonuses
+  const isFirstEver = (state.brainTesterScores||[]).length === 0;
+  const hadRazorBefore = (state.brainTesterScores||[]).some(x=>x.score>=7);
+  let oneTime = 0;
+  if(isFirstEver){ oneTime += XP.btFirst; }
+  if(score>=7 && !hadRazorBefore){ oneTime += XP.btRazor; }
+  if(oneTime>0) addXP(oneTime);
+
+  updateState({brainTesterScores:[...(state.brainTesterScores||[]), {score, date:new Date().toISOString()}]});
+
+  const earnedThisRound = (score*XP.btCorrect) + oneTime;
+
+  app.innerHTML = `
+    <div class="screen">
+      <div class="topbar"><button class="back" data-go="#/concepts">${ICONS.back} Concepts</button></div>
+      <div class="result">
+        <div class="score tnum">${score}<small>/${total}</small></div>
+        <div class="iq ${label.toLowerCase()}">${esc(label)}</div>
+        <div class="xp-earn tnum">+${earnedThisRound} XP earned</div>
+        <div class="again">
+          <button class="cta" id="playAgain">Play Again <span>${ICONS.replay}</span></button>
+        </div>
+      </div>
+    </div>`;
+  bindGo();
+
+  if(score>=7){ celebrate(); }
+  document.getElementById("playAgain").addEventListener("click", ()=>{ playSound("tap"); startBTSession(); drawBTQuestion(); });
+}
+
+/* =====================================================================
+   SCREEN 5 - SETTINGS
+   ===================================================================== */
+function renderSettings(){
+  const earned = new Set(state.badgesEarned||[]);
+  const badgeGrid = BADGES.map(b=>{
+    const has = earned.has(b.id);
+    return `<div class="badge ${has?"":"locked"}" title="${esc(b.name)}: ${esc(b.desc)}">
+      <span class="bdisc">${ICONS.trophy}</span>
+      <span class="bname">${esc(b.name)}</span>
+      <span class="bdesc-tip">${esc(b.desc)}</span>
+    </div>`;
+  }).join("");
+
+  app.innerHTML = `
+    <div class="screen">
+      <div class="topbar"><button class="back" data-go="#/concepts">${ICONS.back} Concepts</button></div>
+      <h1 class="cp-title display" style="font-size:var(--fs-h1c)">Settings</h1>
+
+      <div class="set-sec">
+        <h2>Your Progress</h2>
+        <div class="prog-row"><span>Total XP</span><span class="v tnum">${state.xp}</span></div>
+        <div class="prog-row"><span>Rank</span><span class="v">${esc(rankFor(state.xp))}</span></div>
+        <div class="prog-row"><span>Badges</span><span class="v tnum">${(state.badgesEarned||[]).length} / 5</span></div>
+        <div class="badge-grid">${badgeGrid}</div>
+      </div>
+
+      <div class="set-sec">
+        <h2>Sound</h2>
+        <div class="toggle-row">
+          <span class="lbl">Sound effects</span>
+          <button class="switch" id="soundToggle" role="switch" aria-checked="${state.soundEnabled}" aria-label="Sound effects">
+            <span class="track"><span class="knob"></span></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="set-sec">
+        <h2>Reset</h2>
+        <button class="danger" id="resetBtn">Reset Progress</button>
+      </div>
+
+      <div class="set-foot">Your progress is saved on this device only.<br>Need help? Ask your coach.</div>
+    </div>`;
+  bindGo();
+
+  const tog = document.getElementById("soundToggle");
+  tog.addEventListener("click", ()=>{
+    const next = !state.soundEnabled;
+    updateState({soundEnabled:next});
+    tog.setAttribute("aria-checked", String(next));
+    if(next){ ensureAudio(); playSound("tap"); }
+  });
+
+  document.getElementById("resetBtn").addEventListener("click", ()=>{
+    document.getElementById("resetScrim").classList.add("open");
+  });
+}
+
+/* reset modal wiring */
+document.getElementById("resetCancel").addEventListener("click", ()=>document.getElementById("resetScrim").classList.remove("open"));
+document.getElementById("resetScrim").addEventListener("click", e=>{ if(e.target.id==="resetScrim") e.currentTarget.classList.remove("open"); });
+document.getElementById("resetConfirm").addEventListener("click", ()=>{
+  try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+  state = defaultState();
+  btSession = null;
+  document.getElementById("resetScrim").classList.remove("open");
+  go("#/");
+  // ensure a clean landing render even if hash was already "#/"
+  router();
+});
+
+/* =====================================================================
+   ROUTER
+   ===================================================================== */
+function bindGo(){
+  document.querySelectorAll("[data-go]").forEach(el=>{
+    el.addEventListener("click", ()=>{ playSound("tap"); go(el.dataset.go); });
+  });
+}
+
+function router(){
+  closeSheet();
+  const hash = location.hash || "#/";
+  window.scrollTo(0,0);
+  if(hash === "#/" || hash === "#"){ renderLanding(); return; }
+  if(hash === "#/concepts"){ renderConcepts(); return; }
+  if(hash.startsWith("#/concept/")){ renderConcept(hash.split("/")[2]); return; }
+  if(hash === "#/brain-tester"){ renderBrainTester(); return; }
+  if(hash === "#/settings"){ renderSettings(); return; }
+  renderLanding();
+}
+
+window.addEventListener("hashchange", router);
+window.addEventListener("DOMContentLoaded", router);
+// in case DOMContentLoaded already fired
+if(document.readyState !== "loading"){ router(); }
+</script>
+</body>
+</html>
